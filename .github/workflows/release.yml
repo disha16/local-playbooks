@@ -1,12 +1,17 @@
 name: Build installers
 
-# Run by hand from the Actions tab, or push a tag like v0.1.0 to also publish a release.
+# Runs when installer files change, by hand from the Actions tab, or on a tag like v0.1.0
+# (a tag also creates a draft release).
 # Uses the capture engine from the latest successful "Build capture engine" run on main.
 
 on:
   workflow_dispatch:
   push:
     tags: ["v*"]
+    branches: [main]
+    paths:
+      - "installer/**"
+      - ".github/workflows/release.yml"
 
 permissions:
   contents: write
