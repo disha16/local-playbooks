@@ -1,12 +1,13 @@
 import { fetchActivity } from "./screenpipe.js";
 import { condense, toTimelineText, chunkText } from "./condense.js";
 import { redact } from "./redact.js";
+import { redactNames } from "./names.js";
 import { SYSTEM, MODES } from "./prompts.js";
 
 /**
  * Screenpipe activity -> condensed timeline -> redacted -> summarized (map-reduce).
  */
-export async function run({ mode, start, end, app, engine, screenpipeUrl, extraTerms, onStep = () => {} }) {
+export async function run({ mode, start, end, app, engine, screenpipeUrl, extraTerms, nameDetector, onStep = () => {} }) {
   const spec = MODES[mode];
   if (!spec) throw new Error(`Unknown mode "${mode}". Use: ${Object.keys(MODES).join(", ")}`);
 
@@ -17,7 +18,13 @@ export async function run({ mode, start, end, app, engine, screenpipeUrl, extraT
   }
 
   const blocks = condense(events);
-  const { text: timeline, count: redactions } = redact(toTimelineText(blocks), { extraTerms });
+  // Names and addresses first (model), then pattern rules as a backup for record and claim numbers.
+  let raw = toTimelineText(blocks);
+  let nameHits = 0;
+  if (nameDetector) ({ text: raw, count: nameHits } = await redactNames(raw, nameDetector));
+  const patterns = redact(raw, { extraTerms });
+  const timeline = patterns.text;
+  const redactions = patterns.count + nameHits;
   onStep(`${events.length} captures → ${blocks.length} activity blocks, ${redactions} items redacted`);
 
   const chunks = chunkText(timeline, engine.maxInputChars);

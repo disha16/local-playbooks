@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { run } from "../src/pipeline.js";
 import { startEngine, stopEngine, engineStatus } from "../src/engine.js";
+import { createNameDetector } from "../src/names.js";
 import { runMap } from "../src/processmap/index.js";
 import { checkHealth, DEFAULT_SCREENPIPE_URL } from "../src/screenpipe.js";
 import { createLocalEngine, DEFAULT_LOCAL_MODEL } from "../src/llm/local.js";
@@ -32,6 +33,7 @@ Options:
   --endpoint <url>         OpenAI-compatible URL, e.g. http://gpu-server:8000/v1
   --endpoint-model <name>  Model name on that server
   --by <app|window>        Process map steps: one per app (default) or per app window
+  --no-names               Skip the name/address detection model (pattern rules only)
   --redact <a,b,c>         Extra words to hide (names, clinic names...)
   --out <dir>              Where to save notes (default: ~/LocalPlaybooks)
   --screenpipe <url>       Screenpipe API (default: ${DEFAULT_SCREENPIPE_URL})
@@ -77,6 +79,7 @@ async function main() {
       redact: { type: "string" },
       by: { type: "string" },
       "no-audio": { type: "boolean" },
+      "no-names": { type: "boolean" },
       out: { type: "string" },
       screenpipe: { type: "string" },
       help: { type: "boolean", short: "h" },
@@ -131,9 +134,18 @@ async function main() {
   const extraTerms = v.redact ? v.redact.split(",").map((s) => s.trim()) : [];
   const engine = cmd === "map" ? { close: async () => {} } : await makeEngine(v);
   try {
+    let nameDetector = null;
+    if (cmd !== "map" && !v["no-names"]) {
+      console.error("Loading name detection model (first run downloads it)…");
+      nameDetector = await createNameDetector().catch((err) => {
+        console.error(`! Name detection could not start (${err.message}).`);
+        return null;
+      });
+      if (!nameDetector) console.error("! Name detection is OFF: names will NOT be hidden. Pattern rules still apply. Use --redact for names.");
+    }
     const common = { start, end, app: v.app, screenpipeUrl, extraTerms, onStep: (msg) => console.error(`• ${msg}`) };
     const { markdown, stats } =
-      cmd === "map" ? await runMap({ ...common, by: v.by || "app" }) : await run({ ...common, mode: cmd, engine });
+      cmd === "map" ? await runMap({ ...common, by: v.by || "app" }) : await run({ ...common, mode: cmd, engine, nameDetector });
     if (!markdown) {
       console.error("No Screenpipe activity found in that window. Is Screenpipe recording?");
       process.exitCode = 1;
