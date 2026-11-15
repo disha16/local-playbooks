@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { run } from "../src/pipeline.js";
+import { startEngine, stopEngine, engineStatus } from "../src/engine.js";
 import { runMap } from "../src/processmap/index.js";
 import { checkHealth, DEFAULT_SCREENPIPE_URL } from "../src/screenpipe.js";
 import { createLocalEngine, DEFAULT_LOCAL_MODEL } from "../src/llm/local.js";
@@ -15,6 +16,9 @@ Usage:
   local-playbooks summary  [options]   What you did, main tasks, open items
   local-playbooks playbook [options]   Step-by-step guides for workflows you repeated
   local-playbooks map      [options]   Process map: step order, common paths, time per step, rework (no AI needed)
+  local-playbooks start                Start recording in the background (add --no-audio to skip audio)
+  local-playbooks stop                 Stop recording
+  local-playbooks status               Is it recording?
   local-playbooks doctor               Check Screenpipe and the AI engine
 
 Time window (default: last 2 hours):
@@ -72,6 +76,7 @@ async function main() {
       "endpoint-model": { type: "string" },
       redact: { type: "string" },
       by: { type: "string" },
+      "no-audio": { type: "boolean" },
       out: { type: "string" },
       screenpipe: { type: "string" },
       help: { type: "boolean", short: "h" },
@@ -84,6 +89,24 @@ async function main() {
     return;
   }
   const screenpipeUrl = v.screenpipe || DEFAULT_SCREENPIPE_URL;
+
+  if (cmd === "start") {
+    console.error("Starting capture (first run downloads speech models and asks for screen/microphone permission)…");
+    const r = await startEngine({ audio: !v["no-audio"] });
+    console.log(r.already ? "Already recording." : `Recording. Data stays in ~/LocalPlaybooks/.capture (process ${r.pid}).`);
+    return;
+  }
+  if (cmd === "stop") {
+    const r = await stopEngine();
+    console.log(r.stopped ? "Recording stopped." : "Nothing to stop (not started by local-playbooks).");
+    return;
+  }
+  if (cmd === "status") {
+    const s = await engineStatus();
+    console.log(s.running ? `Recording (port ${s.port}).` : "Not recording. Run: local-playbooks start");
+    console.log(s.binary ? `Capture engine: ${s.binary}` : "Capture engine: not found");
+    return;
+  }
 
   if (cmd === "doctor") {
     const h = await checkHealth(screenpipeUrl);
