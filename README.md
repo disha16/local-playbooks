@@ -104,7 +104,9 @@ Models are stored in `~/.local-playbooks/models`. Bigger models write better not
 
 ## Licensing
 
-local-playbooks is MIT-licensed. It talks to Screenpipe over its local API and doesn't include Screenpipe's code. Screenpipe has its own [license](https://github.com/screenpipe/screenpipe/blob/main/LICENSE.md): free for personal use, with separate terms for commercial and organizational use. Check it before rolling out at a company.
+local-playbooks is MIT-licensed.
+
+The capture engine in `engine/` is a copy of the open-source Screenpipe engine at its last MIT-licensed commit (`892199f`, 10 June 2026). Later Screenpipe versions use a commercial license and are not used here. The original MIT license and copyright notice are in [`engine/LICENSE-UPSTREAM.md`](engine/LICENSE-UPSTREAM.md). This project is not affiliated with Screenpipe. See [`engine/README.md`](engine/README.md).
 
 ## Development
 
@@ -114,12 +116,15 @@ npm test     # runs against a fake Screenpipe and a fake AI server
 
 Code map:
 
-- `src/screenpipe.js` – reads Screenpipe's `/search` API
+- `engine/` – capture engine source (Rust), built by GitHub Actions
+- `src/engine.js` – starts and stops the capture engine in the background
+- `src/screenpipe.js` – reads the capture engine's local `/search` API
 - `src/condense.js` – dedupes screen text into a timeline
 - `src/redact.js` – removes sensitive identifiers
 - `src/prompts.js` – summary and playbook prompts
 - `src/llm/local.js` – built-in model (llama.cpp)
 - `src/llm/endpoint.js` – OpenAI-compatible server
+- `src/processmap/` – process map (step order, paths, timing, rework)
 - `src/pipeline.js` – ties it together; splits long days into parts and combines them
 
 ## Roadmap
