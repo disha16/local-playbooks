@@ -2,22 +2,23 @@
 
 Turn your screen history into **summaries** and **step-by-step playbooks**, with AI that runs on your own machine.
 
-[Screenpipe](https://github.com/screenpipe/screenpipe) records your screen and audio and reads the text locally. `local-playbooks` reads that history and writes:
+A built-in recorder captures your screen and audio and reads the text locally. `local-playbooks` reads that history and writes:
 
 - **Summary:** what you worked on, main tasks, and open items.
 - **Playbook:** reusable step-by-step guides for workflows you repeated, with decision points and slow spots. Useful for training new teammates.
+- **Process map:** which step follows which, common paths, time per step, slow spots and rework.
 
 Nothing leaves your machine unless you point it at a server you control.
 
 ## How it works
 
 ```
-Screenpipe (capture + OCR + transcription, local)
+Capture engine (screen text + transcription, local)
       │  localhost:3030
       ▼
 local-playbooks
   1. Condense   – drops repeated screen text, groups by app/window
-  2. Redact     – removes emails, phone numbers, SSNs, dates, record/member IDs
+  2. Redact     – names and addresses (local model), then emails, phones, SSNs, dates, record/member IDs
   3. Summarize  – built-in model (default) or your own server
       ▼
 ~/LocalPlaybooks/2026-11-14-09-00-summary.md
@@ -35,17 +36,19 @@ The built-in model runs through [llama.cpp](https://github.com/ggml-org/llama.cp
 
 ## Setup
 
-1. Install and start [Screenpipe](https://github.com/screenpipe/screenpipe). Let it record for a while.
-2. Install Node.js 20+.
-3. Install local-playbooks:
+1. Download the installer for Mac or Windows from [Releases](https://github.com/disha16/local-playbooks/releases) and run it. Nothing else needs to be installed.
+2. Open a new terminal (Mac) or Command Prompt (Windows):
 
 ```bash
-git clone https://github.com/disha16/local-playbooks.git
-cd local-playbooks
-npm install
-npm link        # makes the `local-playbooks` command available
-local-playbooks doctor
+local-playbooks start     # start recording in the background
+local-playbooks status
+local-playbooks doctor    # checks the recorder and the AI model
+local-playbooks stop
 ```
+
+The installers are not signed yet, so Windows and macOS show a warning the first time. On first start, macOS asks for screen recording and microphone permission.
+
+From source (developers): install Node.js 20+, then `git clone`, `npm install`, `npm link`. The recorder is built by GitHub Actions; download it from a "Build capture engine" run and set `LOCAL_PLAYBOOKS_ENGINE` to its path.
 
 ## Use
 
@@ -98,8 +101,8 @@ Models are stored in `~/.local-playbooks/models`. Bigger models write better not
 
 ## Privacy
 
-- Screenpipe and local-playbooks both run on your machine. With the default engine, no data leaves it.
-- Redaction is **pattern-based and best-effort**: it catches structured identifiers (emails, phones, SSNs, dates, MRN/member/claim numbers, long digit strings) but **not free-text names**. Use `--redact` for names, and use Screenpipe's app/window filters to avoid recording sensitive apps in the first place.
+- The recorder and local-playbooks both run on your machine. With the default engine, no data leaves it. The recorder is always started with telemetry off.
+- Names and addresses are found by [OpenAI Privacy Filter](https://github.com/openai/privacy-filter) (Apache 2.0), running locally. Pattern rules then catch emails, phones, SSNs, dates, MRN/member/claim numbers and long digit strings. Both are **best-effort and will miss things**. Use `--redact` for names you know about.
 - Don't treat this as a HIPAA compliance tool. If you use it around patient data, review it with your security/compliance team.
 
 ## Licensing
@@ -131,5 +134,4 @@ Code map:
 
 - Simple desktop UI (menu bar app) instead of the command line
 - Scheduled daily summary
-- Better name detection for redaction
 - Export playbooks to Notion / Google Docs
