@@ -1,0 +1,35 @@
+{
+  "name": "local-playbooks",
+  "version": "0.1.0",
+  "description": "Turn your Screenpipe screen history into summaries and step-by-step playbooks, with AI that runs on your own machine.",
+  "type": "module",
+  "bin": {
+    "local-playbooks": "bin/cli.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "optionalDependencies": {
+    "node-llama-cpp": "^3.22.3"
+  },
+  "keywords": [
+    "screenpipe",
+    "local-ai",
+    "on-prem",
+    "llama.cpp",
+    "sop",
+    "playbook",
+    "privacy"
+  ],
+  "author": "Disha Rawal",
+  "license": "MIT"
+}
