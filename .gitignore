@@ -1,2 +1,6 @@
 node_modules/
 .DS_Store
+engine/target/
+engine/apps/
+engine/out/
+engine-bin/
