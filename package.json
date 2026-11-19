@@ -13,7 +13,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node --test test/*.test.js",
+    "test": "node scripts/run-tests.js",
     "start": "electron .",
     "bundle:check": "node scripts/check-desktop-bundle.js",
     "dist": "npm run bundle:check && electron-builder --publish never"
