@@ -446,10 +446,27 @@ async fn main() -> anyhow::Result<()> {
     let local_data_dir_clone = local_data_dir.clone();
 
     // Build unified RecordingConfig from shared app settings plus explicit CLI args.
-    let config = record_args
+    let mut config = record_args
         .clone()
         .into_recording_config(local_data_dir.clone(), &record_arg_sources)
         .await?;
+
+    if std::env::var_os("LOCAL_PLAYBOOKS_DESKTOP").is_some() {
+        config.analytics_enabled = false;
+        config.api_auth = false; // Desktop allow-list middleware authenticates every request.
+        config.listen_address = std::net::Ipv4Addr::LOCALHOST;
+        config.audio_transcription_engine = screenpipe_audio::core::engine::AudioTranscriptionEngine::WhisperTiny;
+        config.meeting_streaming.enabled = false;
+        config.enable_workflow_events = false;
+        config.disable_clipboard_capture = true;
+        config.disable_keyboard_capture = true;
+        config.disable_meeting_detector = true;
+        config.disable_snapshot_compaction = true;
+        if std::env::var("LOCAL_PLAYBOOKS_READ_ONLY").as_deref() == Ok("1") {
+            config.disable_vision = true;
+            config.disable_audio = true;
+        }
+    }
 
     // mDNS LAN discovery is opt-in (off by default) so we don't trigger the
     // macOS "Local Network" permission prompt unless the user wants it.
@@ -461,14 +478,6 @@ async fn main() -> anyhow::Result<()> {
         record_args.debug,
         !config.analytics_enabled,
     )?);
-
-    // Non-blocking update check — runs in background, prints banner if outdated
-    tokio::spawn(async {
-        screenpipe_engine::cli_reminder::check_for_updates().await;
-    });
-
-    // Periodic terminal nudge to install the desktop app (CLI-only).
-    screenpipe_engine::cli_reminder::spawn();
 
     // Initialize Sentry only if telemetry is enabled
     let _sentry_guard = if config.analytics_enabled {
@@ -974,7 +983,10 @@ async fn main() -> anyhow::Result<()> {
     let ignored_windows_clone = config.ignored_windows.clone();
     let included_windows_clone = config.included_windows.clone();
     // Create UI recorder config early before cli is moved
-    let ui_recorder_config = config.to_ui_recorder_config();
+    let mut ui_recorder_config = config.to_ui_recorder_config();
+    if std::env::var("LOCAL_PLAYBOOKS_READ_ONLY").as_deref() == Ok("1") {
+        ui_recorder_config.enabled = false;
+    }
 
     // Meeting detection uses app focus + audio RMS only (no transcription needed).
     // It still needs audio capture enabled; otherwise the UI scanner has no useful
@@ -1350,127 +1362,7 @@ async fn main() -> anyhow::Result<()> {
         server
     };
 
-    // Initialize pipe manager
-    let pipes_dir = local_data_dir.join("pipes");
-    std::fs::create_dir_all(&pipes_dir).ok();
-
-    let user_token = std::env::var("SCREENPIPE_API_KEY").ok();
-    let pi_executor = std::sync::Arc::new(
-        screenpipe_core::agents::pi::PiExecutor::new(user_token.clone())
-            .with_api_auth_key(config.api_auth_key.clone()),
-    );
-
-    // Workflow event classifier — opt-in cloud feature. Polls recent activity
-    // and emits `WorkflowEvent`s on the bus so pipes with `trigger.events`
-    // frontmatter can run. Routed through the gateway by default; self-host
-    // can override with SCREENPIPE_EVENT_CLASSIFIER_URL.
-    if config.enable_workflow_events {
-        let classifier_url =
-            std::env::var("SCREENPIPE_EVENT_CLASSIFIER_URL").unwrap_or_else(|_| {
-                screenpipe_engine::workflow_classifier::DEFAULT_CLASSIFIER_URL.to_string()
-            });
-        let token = user_token.clone().unwrap_or_default();
-        let port = config.port;
-        tokio::spawn(async move {
-            screenpipe_engine::workflow_classifier::start_workflow_classifier(
-                classifier_url,
-                token,
-                port,
-                std::time::Duration::from_secs(30),
-            )
-            .await;
-        });
-    }
-
-    let mut agent_executors: std::collections::HashMap<
-        String,
-        std::sync::Arc<dyn screenpipe_core::agents::AgentExecutor>,
-    > = std::collections::HashMap::new();
-    agent_executors.insert("pi".to_string(), pi_executor.clone());
-
-    // Create pipe store backed by the main SQLite DB
-    let pipe_store: Option<std::sync::Arc<dyn screenpipe_core::pipes::PipeStore>> =
-        Some(std::sync::Arc::new(
-            screenpipe_engine::pipe_store::SqlitePipeStore::new(db.clone()),
-        ));
-
-    let mut pipe_manager = screenpipe_core::pipes::PipeManager::new(
-        pipes_dir,
-        agent_executors,
-        pipe_store,
-        config.port,
-    );
-    // Wire pipe permission token registry (bridges PipeManager ↔ server middleware)
-    pipe_manager.set_token_registry(std::sync::Arc::new(
-        screenpipe_engine::pipe_permissions_middleware::DashMapTokenRegistry::new(
-            server.pipe_permissions.clone(),
-        ),
-    ));
-    pipe_manager.set_on_run_complete(std::sync::Arc::new(
-        |pipe_name, success, duration_secs, error_type| {
-            let mut props = serde_json::json!({
-                "pipe": pipe_name,
-                "success": success,
-                "duration_secs": duration_secs,
-            });
-            if let Some(et) = error_type {
-                props["error_type"] = serde_json::Value::String(et.to_string());
-            }
-            analytics::capture_event_nonblocking("pipe_scheduled_run", props);
-        },
-    ));
-    // Gate scheduled pipe runs on connection readiness — same predicate the
-    // manual /pipes/:id/run endpoint uses (pipes_api.rs). Avoids running
-    // pipes that are still in "setup mode" (declared connections not paired).
-    {
-        let secret_store_for_check = server.secret_store.clone();
-        let screenpipe_dir_for_check = local_data_dir.clone();
-        pipe_manager.set_connection_check(std::sync::Arc::new(move |required| {
-            let ss = secret_store_for_check.clone();
-            let dir = screenpipe_dir_for_check.clone();
-            Box::pin(async move {
-                let mut missing = Vec::new();
-                for conn_id in required {
-                    let configured = screenpipe_connect::connections::load_connection(
-                        ss.as_deref(),
-                        &dir,
-                        &conn_id,
-                    )
-                    .await
-                    .map(|c| c.enabled && !c.credentials.is_empty())
-                    .unwrap_or(false);
-                    if !configured {
-                        missing.push(conn_id);
-                    }
-                }
-                missing
-            })
-        }));
-    }
-    // Inject local API key so pipe subprocesses can authenticate to localhost
-    if config.api_auth {
-        pipe_manager.set_local_api_key(config.api_auth_key.clone());
-    }
-    pipe_manager.install_builtin_pipes().ok();
-    if let Err(e) = pipe_manager.load_pipes().await {
-        tracing::warn!("failed to load pipes: {}", e);
-    }
-    // Mark any executions left 'running' from a previous crash as failed
-    pipe_manager.startup_recovery().await;
-    if let Err(e) = pipe_manager.start_scheduler().await {
-        tracing::warn!("failed to start pipe scheduler: {}", e);
-    }
-    let shared_pipe_manager = std::sync::Arc::new(tokio::sync::Mutex::new(pipe_manager));
-    let server = server
-        .with_pipe_manager(shared_pipe_manager.clone())
-        .with_high_fps_controller(high_fps_controller.clone());
-
-    // Install pi agent in background
-    tokio::spawn(async move {
-        if let Err(e) = pi_executor.ensure_installed().await {
-            tracing::warn!("pi agent install failed: {}", e);
-        }
-    });
+    let server = server.with_high_fps_controller(high_fps_controller.clone());
 
     // print screenpipe in gradient
     println!("\n\n{}", DISPLAY.truecolor(147, 112, 219).bold());
@@ -1841,242 +1733,7 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    // Spawn the async PII reconciliation worker (issue #3185).
-    // Off by default — only runs when `--async-pii-redaction` is set.
-    // The capture path is unaffected either way.
-    if !config.async_pii_redaction {
-        info!(
-            "text-PII worker skipped at startup — async_pii_redaction=false. \
-             OPF model (~2.8 GB) will NOT be downloaded or loaded. \
-             Toggle via Settings → Privacy → AI PII removal."
-        );
-    }
-    if config.async_pii_redaction {
-        use screenpipe_redact::{
-            adapters::{
-                onnx::{OnnxConfig, OnnxRedactor},
-                opf::{OpfAdapter, OpfConfig},
-                tinfoil::{TinfoilConfig, TinfoilRedactor},
-            },
-            pipeline::{Pipeline, PipelineConfig},
-            worker::{Worker, WorkerConfig, ALL_TARGET_TABLES},
-            Redactor, TextRedactionPolicy,
-        };
-        use std::sync::Arc;
-
-        info!("starting async PII reconciliation worker (destructive overwrite of source columns)");
-
-        // Pipeline: regex pre-pass + AI fallback. Regex catches
-        // structural PII deterministically and on-device. AI step
-        // resolves to (preference order):
-        //   1. v45_phase3 ONNX (xlm-roberta-base fine-tune, INT8, ~278 MB,
-        //      9 ms p50 on CPU, CoreML on macOS / DirectML on Windows
-        //      via the redact-onnx-* CI feature). First run downloads
-        //      from huggingface.co/screenpipe/pii-redactor under
-        //      v45_phase3_onnx/. Same checkpoint the Tinfoil container
-        //      and the desktop app's own worker use, so outputs match
-        //      across surfaces.
-        //   2. Legacy opf-rs (candle, OPF v6, ~74 ms p50 on Mac CPU,
-        //      ~2.8 GB) if v45 ONNX isn't compiled in or the download
-        //      fails.
-        //   3. Tinfoil confidential-compute enclave when TINFOIL_*
-        //      env vars are set and both local adapters are unavailable.
-        //   4. Regex-only otherwise (still destructive — overwrites
-        //      regex-redacted text into the source columns).
-        let pool = db.pool.clone();
-        let labels = config.pii_redaction_labels.clone();
-        tokio::spawn(async move {
-            // Per-label allow-list from the `piiRedactionLabels` setting
-            // (default ["secret"]). Local adapters filter client-side via
-            // this policy; the env-gated tinfoil fallback forwards the
-            // raw labels so the enclave filters server-side.
-            let policy = TextRedactionPolicy::from_labels(&labels);
-            info!(
-                "fetching v45 phase 3 ONNX text redactor (~278 MB INT8 on first run, \
-                 cached at ~/.screenpipe/models/v45_phase3_onnx/)"
-            );
-            let pipeline = match OnnxRedactor::load_or_download(OnnxConfig::default()).await {
-                Ok(adapter) => {
-                    info!(
-                        "text-PII AI step: local v45_phase3 ONNX — same checkpoint as the \
-                         desktop app + Tinfoil container, sub-10 ms p50 on CPU"
-                    );
-                    let ai: Arc<dyn Redactor> = Arc::new(adapter);
-                    Pipeline::regex_then_ai(
-                        ai,
-                        PipelineConfig {
-                            policy: policy.clone(),
-                            ..Default::default()
-                        },
-                    )
-                }
-                Err(onnx_err) => {
-                    tracing::warn!(
-                        "couldn't load v45 phase 3 ONNX redactor ({onnx_err}); falling back \
-                         to OPF v6 candle"
-                    );
-                    info!(
-                        "fetching local OPF v6 checkpoint (~2.8 GB on first run, cached at \
-                         ~/.screenpipe/models/opf-v6/)"
-                    );
-                    match OpfAdapter::load_or_download(OpfConfig::default()).await {
-                        Ok(adapter) => {
-                            info!(
-                                "text-PII AI step: local opf-rs (candle) fallback — lazy load \
-                                 on first batch, idle-unload after 60s of no work"
-                            );
-                            // Wrap in Arc first so we can spawn the idle
-                            // unloader (which needs `Arc<Self>`) and still
-                            // hand the same Arc to the Pipeline.
-                            let adapter = Arc::new(adapter);
-                            let _unloader = Arc::clone(&adapter).spawn_idle_unloader();
-                            let ai: Arc<dyn Redactor> = adapter;
-                            Pipeline::regex_then_ai(
-                                ai,
-                                PipelineConfig {
-                                    policy: policy.clone(),
-                                    ..Default::default()
-                                },
-                            )
-                        }
-                        Err(e) => {
-                            if std::env::var("TINFOIL_API_KEY").is_ok()
-                                || std::env::var("TINFOIL_BASE_URL").is_ok()
-                            {
-                                info!(
-                                    "text-PII AI step: tinfoil enclave (local adapters \
-                                     unavailable: opf-rs={e})"
-                                );
-                                let ai: Arc<dyn Redactor> =
-                                    Arc::new(TinfoilRedactor::new(TinfoilConfig {
-                                        labels: labels.clone(),
-                                        ..Default::default()
-                                    }));
-                                Pipeline::regex_then_ai(
-                                    ai,
-                                    PipelineConfig {
-                                        policy: policy.clone(),
-                                        ..Default::default()
-                                    },
-                                )
-                            } else {
-                                tracing::warn!(
-                                    "text-PII AI step disabled — both v45 ONNX and opf-rs \
-                                     unavailable ({e}), and no TINFOIL_* env vars set. Worker \
-                                     will run regex-only."
-                                );
-                                Pipeline::regex_only_with_policy(policy.clone())
-                            }
-                        }
-                    }
-                }
-            };
-            let pipeline_arc = Arc::new(pipeline) as Arc<dyn Redactor>;
-
-            let worker_cfg = WorkerConfig {
-                tables: ALL_TARGET_TABLES.to_vec(),
-                ..Default::default()
-            };
-            let _worker_handle = Worker::new(pool, pipeline_arc, worker_cfg).spawn();
-            // The worker runs for the lifetime of the engine. We don't
-            // join its handle — when the process exits the runtime
-            // tears down the task. If we ever want graceful shutdown
-            // (drain in-flight HTTP calls), wire `_worker_handle` into
-            // the shutdown_tx flow.
-        });
-    }
-
-    // Image-PII reconciliation worker (issue #3185 follow-up).
-    // Independent of the text worker — users can toggle either one
-    // without the other. Requires the rfdetr_v9 model present and at
-    // least one of the `onnx-*` or `mlx-mac` cargo features built.
-    if !config.async_image_pii_redaction {
-        info!(
-            "image-PII worker skipped at startup — async_image_pii_redaction=false. \
-             rfdetr_v9 model (~108 MB) will NOT be downloaded or loaded. \
-             Toggle via Settings → Privacy → AI PII removal."
-        );
-    }
-    if config.async_image_pii_redaction {
-        use screenpipe_redact::adapters::rfdetr::{RfdetrConfig, RfdetrRedactor};
-        use screenpipe_redact::image::worker::{ImageWorker, ImageWorkerConfig};
-        use screenpipe_redact::{ImageRedactionPolicy, ImageRedactor};
-        use std::sync::Arc;
-
-        // The desktop app intentionally uses the ONNX image redactor for
-        // local mode. Keep the standalone CLI on that same stable path by
-        // default: the MLX RF-DETR port is still experimental and can crash
-        // the process while reconciling large frame backlogs. Developers can
-        // still opt in while iterating on that runtime.
-        #[allow(unused_mut)]
-        let mut detector_arc: Option<Arc<dyn ImageRedactor>> = None;
-        #[cfg(all(feature = "rfdetr-mlx", target_os = "macos", target_arch = "aarch64"))]
-        {
-            if std::env::var_os("SCREENPIPE_ENABLE_EXPERIMENTAL_RFDETR_MLX").is_some() {
-                use screenpipe_redact::adapters::rfdetr_mlx::{RfdetrMlxConfig, RfdetrMlxRedactor};
-                let mlx_cfg = RfdetrMlxConfig::default();
-                // Mirrors the ONNX adapter: download once, verify SHA-256,
-                // cache at ~/.screenpipe/models/rfdetr_v9.safetensors.
-                if let Err(e) = mlx_cfg.ensure_model_present().await {
-                    tracing::info!(
-                        "rfdetr-mlx safetensors download failed ({e}); falling back to ONNX adapter"
-                    );
-                } else {
-                    match RfdetrMlxRedactor::load(mlx_cfg) {
-                        Ok(d) => {
-                            info!("image-PII detector: rfdetr-mlx (Apple Silicon GPU)");
-                            // Lazy-load + 60 s idle-unload — frees the
-                            // ~150–200 MB MLX resident footprint when the
-                            // worker is paused or the reconciliation queue
-                            // has drained. Same pattern as OpfAdapter.
-                            let d = Arc::new(d);
-                            let _ = Arc::clone(&d).spawn_idle_unloader();
-                            detector_arc = Some(d as Arc<dyn ImageRedactor>);
-                        }
-                        Err(e) => {
-                            tracing::info!(
-                                "rfdetr-mlx load failed ({e}); falling back to ONNX adapter"
-                            );
-                        }
-                    }
-                }
-            } else {
-                tracing::info!(
-                    "rfdetr-mlx disabled by default for CLI stability; \
-                     set SCREENPIPE_ENABLE_EXPERIMENTAL_RFDETR_MLX=1 to opt in"
-                );
-            }
-        }
-        if detector_arc.is_none() {
-            match RfdetrRedactor::load_or_download(RfdetrConfig::default()).await {
-                Ok(d) => {
-                    info!("image-PII detector: rfdetr (ONNX Runtime)");
-                    detector_arc = Some(Arc::new(d) as Arc<dyn ImageRedactor>);
-                }
-                Err(e) => {
-                    // Loud-but-non-fatal: capture continues; user gets
-                    // an explicit "model missing or download failed"
-                    // message in the log, and the regular text
-                    // redactor (if enabled) keeps running.
-                    tracing::warn!(
-                        "image-PII redaction enabled but couldn't load model; skipping: {e}. \
-                         check network reachability to huggingface.co or pre-stage \
-                         rfdetr_v9.onnx at ~/.screenpipe/models/."
-                    );
-                }
-            }
-        }
-        if let Some(detector) = detector_arc {
-            info!(
-                "starting async image-PII reconciliation worker (destructive overwrite of source JPGs)"
-            );
-            let cfg = ImageWorkerConfig {
-                policy: ImageRedactionPolicy::from_labels(&config.pii_redaction_labels),
-                ..Default::default()
-            };
-            let _img_handle = ImageWorker::new(db.pool.clone(), detector, cfg).spawn();
-        }
-    }
+    // PII processing is handled by the local JavaScript Privacy Filter.
 
     // Add auto-destruct watcher
     if let Some(pid) = record_args.auto_destruct_pid {

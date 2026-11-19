@@ -1,6 +1,6 @@
 {
   "name": "local-playbooks",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Turn your Screenpipe screen history into summaries and step-by-step playbooks, with AI that runs on your own machine.",
   "type": "module",
   "bin": {
@@ -13,14 +13,13 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "start": "electron .",
+    "bundle:check": "node scripts/check-desktop-bundle.js",
+    "dist": "npm run bundle:check && electron-builder --publish never"
   },
   "engines": {
     "node": ">=20"
-  },
-  "optionalDependencies": {
-    "node-llama-cpp": "^3.22.3",
-    "@huggingface/transformers": "^3.7.0"
   },
   "keywords": [
     "screenpipe",
@@ -32,5 +31,14 @@
     "privacy"
   ],
   "author": "Disha Rawal",
-  "license": "MIT"
+  "license": "MIT",
+  "main": "desktop/main.js",
+  "dependencies": {
+    "node-llama-cpp": "3.22.3",
+    "@huggingface/transformers": "4.3.2"
+  },
+  "devDependencies": {
+    "electron": "45.4.1",
+    "electron-builder": "26.18.1"
+  }
 }

@@ -7,12 +7,12 @@ import { SYSTEM, MODES } from "./prompts.js";
 /**
  * Screenpipe activity -> condensed timeline -> redacted -> summarized (map-reduce).
  */
-export async function run({ mode, start, end, app, engine, screenpipeUrl, extraTerms, nameDetector, onStep = () => {} }) {
+export async function run({ mode, start, end, app, engine, screenpipeUrl, extraTerms, nameDetector, headers, onStep = () => {} }) {
   const spec = MODES[mode];
   if (!spec) throw new Error(`Unknown mode "${mode}". Use: ${Object.keys(MODES).join(", ")}`);
 
   onStep(`Reading Screenpipe activity ${start.toLocaleString()} → ${end.toLocaleString()}`);
-  const events = await fetchActivity({ start, end, app, baseUrl: screenpipeUrl });
+  const events = await fetchActivity({ start, end, app, baseUrl: screenpipeUrl, headers });
   if (events.length === 0) {
     return { markdown: null, stats: { events: 0 } };
   }

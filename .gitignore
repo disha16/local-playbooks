@@ -6,3 +6,14 @@ engine/out/
 engine-bin/
 stage/
 dist/
+
+dist/
+work/
+engine-bin/
+node_modules/
+.env
+*.gguf
+*.safetensors
+*.db
+*.db-shm
+*.db-wal

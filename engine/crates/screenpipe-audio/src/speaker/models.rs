@@ -92,13 +92,13 @@ fn model_state(
 ) {
     match model_type {
         PyannoteModel::Segmentation => (
-            "https://github.com/screenpipe/screenpipe/raw/refs/heads/main/crates/screenpipe-audio/models/pyannote/segmentation-3.0.onnx",
+            "https://github.com/screenpipe/screenpipe/raw/892199f742e46d0c5d9e8c06687b35ca7c2b6547/crates/screenpipe-audio/models/pyannote/segmentation-3.0.onnx",
             "segmentation-3.0.onnx",
             &SEGMENTATION_MODEL_PATH,
             &SEGMENTATION_DOWNLOADING,
         ),
         PyannoteModel::Embedding => (
-            "https://github.com/screenpipe/screenpipe/raw/refs/heads/main/crates/screenpipe-audio/models/pyannote/wespeaker_en_voxceleb_CAM++.onnx",
+            "https://github.com/screenpipe/screenpipe/raw/892199f742e46d0c5d9e8c06687b35ca7c2b6547/crates/screenpipe-audio/models/pyannote/wespeaker_en_voxceleb_CAM++.onnx",
             "wespeaker_en_voxceleb_CAM++.onnx",
             &EMBEDDING_MODEL_PATH,
             &EMBEDDING_DOWNLOADING,
@@ -124,6 +124,9 @@ pub fn is_ort_load_error(err: &anyhow::Error) -> bool {
 }
 
 fn get_cache_dir() -> Result<PathBuf> {
+        if let Some(base) = std::env::var_os("LOCAL_PLAYBOOKS_AUDIO_CACHE") {
+            return Ok(PathBuf::from(base).join("models"));
+        }
     let proj_dirs = dirs::cache_dir().ok_or_else(|| anyhow!("failed to get cache dir"))?;
     Ok(proj_dirs.join("screenpipe").join("models"))
 }

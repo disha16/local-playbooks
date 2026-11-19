@@ -1,0 +1,53 @@
+appId: com.disharawal.localplaybooks
+productName: Local Playbooks
+asar: true
+npmRebuild: false
+beforePack: scripts/check-desktop-bundle-hook.cjs
+files:
+  - desktop/**
+  - src/**
+  - package.json
+  - LICENSE
+  - THIRD_PARTY_NOTICES.md
+asarUnpack:
+  - node_modules/node-llama-cpp/**
+  - node_modules/@node-llama-cpp/**
+  - node_modules/onnxruntime-node/**
+  - node_modules/sharp/**
+  - node_modules/@img/**
+extraResources:
+  - from: engine/LICENSE-UPSTREAM.md
+    to: engine-bin/CAPTURE-LICENSE.md
+  - from: THIRD_PARTY_NOTICES.md
+    to: THIRD_PARTY_NOTICES.md
+directories:
+  output: dist
+artifactName: local-playbooks-${version}-${os}-${arch}.${ext}
+mac:
+  extraResources:
+    - from: engine-bin/darwin-arm64
+      to: engine-bin
+  target: [dmg]
+  category: public.app-category.productivity
+  hardenedRuntime: true
+  entitlements: desktop/entitlements.mac.plist
+  entitlementsInherit: desktop/entitlements.mac.plist
+  extendInfo:
+    NSMicrophoneUsageDescription: Local Playbooks transcribes audio on this computer only after you enable recording.
+    NSScreenCaptureUsageDescription: Local Playbooks reads screen text on this computer to create workflow guides.
+win:
+  extraResources:
+    - from: engine-bin/win32-x64
+      to: engine-bin
+  target: [nsis]
+nsis:
+  oneClick: false
+  perMachine: false
+  allowElevation: false
+  packElevateHelper: false
+  allowToChangeInstallationDirectory: true
+  runAfterFinish: true
+  deleteAppDataOnUninstall: false
+  include: installer/desktop.nsh
+  license: LICENSE
+publish: null

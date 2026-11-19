@@ -9,10 +9,10 @@ import { renderProcessMap } from './render.js';
  * by "app": one step per app. by "window": one step per app window; window titles are
  * redacted first because they can contain patient names or record numbers.
  */
-export async function runMap({ start, end, app, screenpipeUrl, by = 'app', extraTerms = [], onStep = () => {} }) {
+export async function runMap({ start, end, app, screenpipeUrl, by = 'app', extraTerms = [], headers, onStep = () => {} }) {
   if (!['app', 'window'].includes(by)) throw new Error(`Unknown --by "${by}". Use app or window.`);
   onStep(`Reading activity ${start.toLocaleString()} → ${end.toLocaleString()}`);
-  const raw = await fetchActivity({ start, end, app, baseUrl: screenpipeUrl });
+  const raw = await fetchActivity({ start, end, app, baseUrl: screenpipeUrl, headers });
   const screen = raw.filter((e) => e.kind !== 'audio');
   if (screen.length === 0) return { markdown: null, stats: { events: raw.length } };
 
