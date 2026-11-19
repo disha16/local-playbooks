@@ -1149,6 +1149,17 @@ impl SCServer {
             })
             .layer(cors)
             .layer(TraceLayer::new_for_http().make_span_with(DefaultMakeSpan::default()))
+            .layer(axum::middleware::from_fn(
+                |req: axum::extract::Request, next: axum::middleware::Next| async move {
+                    if std::env::var_os("LOCAL_PLAYBOOKS_DESKTOP").is_none() { return next.run(req).await; }
+                    let token = std::env::var("LOCAL_PLAYBOOKS_CAPTURE_TOKEN").unwrap_or_default();
+                    let authorized = token.len() >= 32 && req.headers().get(axum::http::header::AUTHORIZATION)
+                        .and_then(|v| v.to_str().ok()).map(|v| v == format!("Bearer {}", token)).unwrap_or(false);
+                    if authorized && req.method() == axum::http::Method::GET && matches!(req.uri().path(), "/health" | "/search") {
+                        next.run(req).await
+                    } else { axum::response::Response::builder().status(403).body(axum::body::Body::from("Capture API access denied")).unwrap() }
+                }
+            ))
     }
 }
 

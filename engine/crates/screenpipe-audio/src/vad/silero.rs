@@ -152,6 +152,9 @@ impl SileroVad {
     }
 
     fn get_cache_dir() -> anyhow::Result<PathBuf> {
+        if let Some(base) = std::env::var_os("LOCAL_PLAYBOOKS_AUDIO_CACHE") {
+            return Ok(PathBuf::from(base).join("vad"));
+        }
         let proj_dirs =
             dirs::cache_dir().ok_or_else(|| anyhow::anyhow!("failed to get cache dir"))?;
         Ok(proj_dirs.join("screenpipe").join("vad"))

@@ -23,3 +23,14 @@ license and states that prior MIT releases remain MIT.
 ## Build
 
 Built by GitHub Actions (`.github/workflows/engine.yml`) for macOS and Windows.
+
+## Desktop setup helper
+
+`playbooks-prepare-models --download` prepares Whisper Tiny, VAD, and speaker
+models without opening a capture device. Setup and the recorder share app-scoped
+model/cache folders. `--version` performs no downloads.
+
+Desktop sessions force local Whisper transcription, loopback access, and an
+authenticated read-only API. Upstream PII workers and agent-install startup are
+removed; the desktop build disables the optional upstream PII adapter dependency.
+The native changes still need compilation and machine validation.

@@ -1,119 +1,61 @@
 name: Build capture engine
-
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - "engine/**"
-      - ".github/workflows/engine.yml"
-
+  workflow_call:
 permissions:
   contents: read
-
-concurrency:
-  group: engine-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  macos:
-    runs-on: macos-latest
-    defaults:
-      run:
-        working-directory: engine
+  build:
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            target: aarch64-apple-darwin
+            platform: darwin-arm64
+            features: metal
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+            platform: win32-x64
+            features: directml
+    runs-on: ${{ matrix.os }}
+    env:
+      SCREENPIPE_SKIP_ONNX_DOWNLOAD: '1'
+      AWS_LC_SYS_PREBUILT_NASM: '1'
+      CMAKE_POLICY_VERSION_MINIMUM: '3.5'
+      GGML_NATIVE: 'OFF'
+      GGML_AVX512: 'OFF'
+      GGML_AVX512_VBMI: 'OFF'
+      GGML_AVX512_VNNI: 'OFF'
+      GGML_AVX512_BF16: 'OFF'
     steps:
       - uses: actions/checkout@v4
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: dtolnay/rust-toolchain@1.93.1
         with:
-          cache-workspaces: engine
-          rustflags: ""
-      - name: Install build tools
-        run: brew install ffmpeg pkg-config || true
-      - name: Build
-        run: |
-          export CFLAGS="-mcpu=apple-m1 -U__ARM_FEATURE_MATMUL_INT8"
-          export CXXFLAGS="-mcpu=apple-m1 -U__ARM_FEATURE_MATMUL_INT8"
-          cargo build --release -p screenpipe-engine --bin playbooks-capture --features metal --target aarch64-apple-darwin
-      - name: Smoke test
-        run: target/aarch64-apple-darwin/release/playbooks-capture --help
-      - name: Package
-        run: |
-          mkdir -p out/darwin-arm64
-          cp target/aarch64-apple-darwin/release/playbooks-capture out/darwin-arm64/
-      - uses: actions/upload-artifact@v4
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
         with:
-          name: engine-darwin-arm64
-          path: engine/out/darwin-arm64
-
-  windows:
-    runs-on: windows-2022
-    defaults:
-      run:
-        working-directory: engine
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          cache-workspaces: engine
-          rustflags: ""
+          workspaces: engine -> target
+      - name: Install Mac tools
+        if: runner.os == 'macOS'
+        run: brew install pkg-config nasm
       - uses: ilammy/msvc-dev-cmd@v1
-      - name: Download ONNX Runtime and OpenBLAS
-        shell: pwsh
+        if: runner.os == 'Windows'
+      - name: Build recorder and model setup helper
+        working-directory: engine
+        shell: bash
+        run: cargo build --release -p screenpipe-engine --bin playbooks-capture --bin playbooks-prepare-models --no-default-features --features ${{ matrix.features }} --target ${{ matrix.target }}
+      - name: Stage executables and linked libraries
+        shell: bash
         run: |
-          # The build scripts look for these under this folder name.
-          $deps = "apps/screenpipe-app-tauri/src-tauri"
-          New-Item -ItemType Directory -Force -Path $deps | Out-Null
-          Invoke-WebRequest "https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-win-x64-1.22.0.zip" -OutFile ort.zip
-          Expand-Archive ort.zip -DestinationPath $deps -Force
-          Invoke-WebRequest "https://github.com/OpenMathLib/OpenBLAS/releases/download/v0.3.31/OpenBLAS-0.3.31-x64.zip" -OutFile openblas.zip
-          Expand-Archive openblas.zip -DestinationPath "$deps/openblas" -Force
-          # Some OpenBLAS zips wrap everything in one folder; flatten it.
-          if (!(Test-Path "$deps/openblas/lib")) {
-            $inner = Get-ChildItem "$deps/openblas" -Directory | Select-Object -First 1
-            Get-ChildItem $inner.FullName | Move-Item -Destination "$deps/openblas"
-          }
-          Get-ChildItem "$deps/openblas"
-          "DEPS_DIR=$((Resolve-Path $deps).Path)" | Out-File -FilePath $env:GITHUB_ENV -Append
-      - name: Shorten target dir (Windows path length limit)
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path C:\t | Out-Null
-          cmd /c mklink /J target C:\t
-      - name: Build
-        shell: pwsh
-        env:
-          CARGO_PROFILE_RELEASE_STRIP: "none"
-          CARGO_PROFILE_RELEASE_PANIC: "abort"
-          RUSTFLAGS: ""
-          CFLAGS: "/arch:AVX2"
-          CXXFLAGS: "/arch:AVX2"
-          GGML_NATIVE: "OFF"
-          GGML_AVX512: "OFF"
-          GGML_AVX512_VBMI: "OFF"
-          GGML_AVX512_VNNI: "OFF"
-          GGML_AVX512_BF16: "OFF"
-          CMAKE_ARGS: "-DGGML_NATIVE=OFF -DGGML_AVX512=OFF -DGGML_AVX512_VBMI=OFF -DGGML_AVX512_VNNI=OFF -DGGML_AVX512_BF16=OFF -DCMAKE_C_FLAGS=/arch:AVX2 -DCMAKE_CXX_FLAGS=/arch:AVX2"
-          ORT_STRATEGY: system
-          AWS_LC_SYS_PREBUILT_NASM: "1"
-        run: |
-          $env:ORT_LIB_LOCATION = "$env:DEPS_DIR/onnxruntime-win-x64-1.22.0"
-          $env:OPENBLAS_PATH = "$env:DEPS_DIR/openblas"
-          cargo build --release -p screenpipe-engine --bin playbooks-capture --features directml --target x86_64-pc-windows-msvc
-      - name: Package
-        shell: pwsh
-        run: |
-          $out = "out/win32-x64"
-          New-Item -ItemType Directory -Force -Path $out | Out-Null
-          Copy-Item "target/x86_64-pc-windows-msvc/release/playbooks-capture.exe" $out
-          $ort = "target/x86_64-pc-windows-msvc/release/onnxruntime.dll"
-          if (!(Test-Path $ort)) { $ort = "$env:DEPS_DIR/onnxruntime-win-x64-1.22.0/lib/onnxruntime.dll" }
-          Copy-Item $ort $out
-          if (Test-Path "$env:DEPS_DIR/openblas/bin") { Copy-Item "$env:DEPS_DIR/openblas/bin/*.dll" $out -Force }
-          foreach ($dll in 'vcruntime140.dll','vcruntime140_1.dll','msvcp140.dll') { Copy-Item "C:\Windows\System32\$dll" $out -Force }
-      - name: Smoke test
-        shell: pwsh
-        run: out/win32-x64/playbooks-capture.exe --help
+          mkdir -p engine-bin/${{ matrix.platform }}
+          if [ "$RUNNER_OS" = Windows ]; then suffix=.exe; else suffix=; fi
+          cp engine/target/${{ matrix.target }}/release/playbooks-capture$suffix engine-bin/${{ matrix.platform }}/
+          cp engine/target/${{ matrix.target }}/release/playbooks-prepare-models$suffix engine-bin/${{ matrix.platform }}/
+          find engine/target/${{ matrix.target }}/release -maxdepth 1 -type f \( -name '*.dll' -o -name '*.dylib' \) -exec cp {} engine-bin/${{ matrix.platform }}/ \;
       - uses: actions/upload-artifact@v4
         with:
-          name: engine-win32-x64
-          path: engine/out/win32-x64
+          name: engine-${{ matrix.platform }}
+          path: engine-bin/${{ matrix.platform }}
+          if-no-files-found: error

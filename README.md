@@ -8,7 +8,8 @@ A built-in recorder captures your screen and audio and reads the text locally. `
 - **Playbook:** reusable step-by-step guides for workflows you repeated, with decision points and slow spots. Useful for training new teammates.
 - **Process map:** which step follows which, common paths, time per step, slow spots and rework.
 
-Nothing leaves your machine unless you point it at a server you control.
+Capture and AI inference run locally. First-run setup downloads model files;
+selecting a remote AI endpoint sends redacted activity to that endpoint.
 
 ## How it works
 
@@ -34,21 +35,35 @@ local-playbooks
 
 The built-in model runs through [llama.cpp](https://github.com/ggml-org/llama.cpp) inside the app ([node-llama-cpp](https://github.com/withcatai/node-llama-cpp)), so you don't need to install Ollama or run a separate server. It uses Metal on Macs and CUDA/Vulkan on Windows and Linux when available.
 
-## Setup
+## Desktop installation
 
-1. Download the installer for Mac or Windows from [Releases](https://github.com/disha16/local-playbooks/releases) and run it. Nothing else needs to be installed.
-2. Open a new terminal (Mac) or Command Prompt (Windows):
+The new installer/setup flow is source code awaiting its first native build and
+clean-machine test. No new signed installer or release has been published yet.
 
-```bash
-local-playbooks start     # start recording in the background
-local-playbooks status
-local-playbooks doctor    # checks the recorder and the AI model
-local-playbooks stop
-```
+Once built, users need only the Windows x64 EXE or Apple Silicon Mac DMG:
 
-The installers are not signed yet, so Windows and macOS show a warning the first time. On first start, macOS asks for screen recording and microphone permission.
+1. Install and open **Local Playbooks**.
+2. Select **Download models and finish setup**. Setup checks local storage, downloads
+   Privacy Filter and the summary model, and can prepare audio models too. It does
+   not record the screen or microphone.
+3. Allow screen/accessibility/microphone access using the settings buttons as needed.
+4. Select **Start recording**, do a short sample task, then **Stop**.
+5. Choose Summary, Playbook, or Process map and select **Create report**.
 
-From source (developers): install Node.js 20+, then `git clone`, `npm install`, `npm link`. The recorder is built by GitHub Actions; download it from a "Build capture engine" run and set `LOCAL_PLAYBOOKS_ENGINE` to its path.
+Node.js, Rust, Screenpipe, Ollama, FFmpeg, and terminal commands are not required
+on the user's computer. The app and capture tools are bundled. Local models need
+a one-time download of several GB, or IT can pre-stage them.
+
+Windows installs for the signed-in user without requesting administrator access.
+Managed computers can still block installation or recording; the app cannot bypass
+those rules. On library/shared computers, get permission from staff and use sample
+data. After testing, **Remove this app's local data** deletes the desktop app's
+recordings, reports, downloaded models, and setup state after confirmation. It does
+not delete copies saved elsewhere or old command-line files.
+
+[Installer build and test steps](docs/INSTALLER.md). Builds run only when requested
+manually, to avoid starting lengthy builds when source is pushed. The existing CLI
+commands below remain available for developers.
 
 ## Use
 
@@ -132,6 +147,5 @@ Code map:
 
 ## Roadmap
 
-- Simple desktop UI (menu bar app) instead of the command line
 - Scheduled daily summary
 - Export playbooks to Notion / Google Docs

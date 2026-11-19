@@ -16,15 +16,20 @@ const TAGS = {
 };
 
 /** Loads the model (downloads it on first use). Returns null if Transformers.js is not installed. */
-export async function createNameDetector({ model = PRIVACY_MODEL } = {}) {
+export async function createNameDetector({ model = PRIVACY_MODEL, allowDownload = true,
+  cacheDir = process.env.LOCAL_PLAYBOOKS_PRIVACY_CACHE, onProgress } = {}) {
   let tf;
   try {
     tf = await import("@huggingface/transformers");
   } catch {
     return null;
   }
-  const classify = await tf.pipeline("token-classification", model, { dtype: "q4" });
-  return (text) => classify(text, { aggregation_strategy: "simple" });
+  tf.env.allowRemoteModels = allowDownload;
+  const classify = await tf.pipeline("token-classification", model, { dtype: "q4", device: "cpu",
+    local_files_only: !allowDownload, ...(cacheDir ? {cache_dir: cacheDir} : {}), progress_callback: onProgress });
+  const detect = (text) => classify(text, { aggregation_strategy: "simple" });
+  detect.close = () => classify.dispose();
+  return detect;
 }
 
 function splitByLines(text, max) {

@@ -1,123 +1,79 @@
-name: Build installers
-
-# Runs when installer files change, by hand from the Actions tab, or on a tag like v0.1.0
-# (a tag also creates a draft release).
-# Uses the capture engine from the latest successful "Build capture engine" run on main.
-
+name: Build desktop installers
+# Native compilation and large downloads happen only after a manual request.
+# Publishes workflow artifacts, never a public GitHub Release automatically.
 on:
   workflow_dispatch:
-  push:
-    tags: ["v*"]
-    branches: [main]
-    paths:
-      - "installer/**"
-      - ".github/workflows/release.yml"
-
 permissions:
-  contents: write
-  actions: read
-
+  contents: read
 jobs:
-  macos:
-    runs-on: macos-latest
+  capture:
+    uses: ./.github/workflows/engine.yml
+  package:
+    needs: capture
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            platform: darwin-arm64
+            targetFlag: mac
+            arch: arm64
+          - os: windows-2022
+            platform: win32-x64
+            targetFlag: win
+            arch: x64
+    runs-on: ${{ matrix.os }}
+    env:
+      LP_PLATFORM: ${{ matrix.platform }}
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Get capture engine
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          RUN=$(gh run list --workflow engine.yml --branch main --status success --limit 1 --json databaseId --jq '.[0].databaseId')
-          gh run download "$RUN" --name engine-darwin-arm64 --dir engine-bin/darwin-arm64
-          chmod +x engine-bin/darwin-arm64/playbooks-capture
-      - name: Test
-        run: npm test
-      - name: Install app dependencies
-        run: npm install --omit=dev
-      - name: Stage files
-        run: |
-          VERSION=$(node -p "require('./package.json').version")
-          echo "APP_VERSION=$VERSION" >> $GITHUB_ENV
-          LIB=stage/usr/local/lib/local-playbooks
-          mkdir -p $LIB/app stage/usr/local/bin
-          cp -R bin src node_modules engine-bin package.json LICENSE README.md $LIB/app/
-          cp engine/LICENSE-UPSTREAM.md $LIB/app/ENGINE-LICENSE.md
-          cp "$(which node)" $LIB/node
-          printf '#!/bin/sh\nexec /usr/local/lib/local-playbooks/node /usr/local/lib/local-playbooks/app/bin/cli.js "$@"\n' > stage/usr/local/bin/local-playbooks
-          chmod +x stage/usr/local/bin/local-playbooks $LIB/node
-      - name: Check the staged app runs
-        run: |
-          LIB=stage/usr/local/lib/local-playbooks
-          $LIB/node $LIB/app/bin/cli.js --help
-          $LIB/node $LIB/app/bin/cli.js status | tee status.txt
-          grep -q "playbooks-capture" status.txt
-      - name: Build installer
-        run: |
-          mkdir -p dist
-          pkgbuild --root stage --identifier io.github.disha16.local-playbooks --version "$APP_VERSION" --install-location / "dist/local-playbooks-$APP_VERSION-mac-arm64.pkg"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: installer-mac
-          path: dist/*.pkg
-
-  windows:
-    runs-on: windows-2022
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Get capture engine
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $run = gh run list --workflow engine.yml --branch main --status success --limit 1 --json databaseId --jq '.[0].databaseId'
-          gh run download $run --name engine-win32-x64 --dir engine-bin/win32-x64
-      - name: Test
-        run: npm test
-      - name: Install app dependencies
-        run: npm install --omit=dev
-      - name: Stage files
-        shell: pwsh
-        run: |
-          $version = node -p "require('./package.json').version"
-          "APP_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
-          New-Item -ItemType Directory -Force -Path stage/app | Out-Null
-          Copy-Item bin, src, node_modules, engine-bin -Destination stage/app -Recurse
-          Copy-Item package.json, LICENSE, README.md -Destination stage/app
-          Copy-Item engine/LICENSE-UPSTREAM.md stage/app/ENGINE-LICENSE.md
-          Copy-Item (Get-Command node).Source stage/node.exe
-          Set-Content -Path stage/local-playbooks.cmd -Value '@"%~dp0node.exe" "%~dp0app\bin\cli.js" %*' -Encoding ascii
-      - name: Check the staged app runs
-        shell: pwsh
-        run: |
-          stage/local-playbooks.cmd --help
-          $status = stage/local-playbooks.cmd status
-          $status
-          if (-not ($status -match "playbooks-capture")) { exit 1 }
-      - name: Build installer
-        shell: pwsh
-        run: |
-          choco install innosetup -y --no-progress
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\windows.iss
-      - uses: actions/upload-artifact@v4
-        with:
-          name: installer-windows
-          path: dist/*.exe
-
-  publish:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [macos, windows]
-    runs-on: ubuntu-latest
-    steps:
+          cache: npm
       - uses: actions/download-artifact@v4
         with:
-          path: dist
-          merge-multiple: true
-      - name: Create draft release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" dist/* --repo "${{ github.repository }}" --draft --generate-notes
+          name: engine-${{ matrix.platform }}
+          path: engine-bin/${{ matrix.platform }}
+      - name: Install Mac media build tools
+        if: runner.os == 'macOS'
+        run: brew install nasm pkg-config
+      - uses: msys2/setup-msys2@v2
+        if: runner.os == 'Windows'
+        with:
+          msystem: MINGW64
+          update: false
+          install: mingw-w64-x86_64-gcc make nasm diffutils tar xz curl python
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - name: Build LGPL media tools on Windows
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: bash scripts/build-ffmpeg.sh
+      - name: Build LGPL media tools on Mac
+        if: runner.os == 'macOS'
+        run: bash scripts/build-ffmpeg.sh
+      - name: Stage Windows runtime libraries
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/stage-onnx.ps1
+      - name: Stage Mac license and executable permissions
+        if: runner.os == 'macOS'
+        run: |
+          chmod +x engine-bin/darwin-arm64/playbooks-*
+          curl --fail --location https://raw.githubusercontent.com/microsoft/onnxruntime/v1.22.0/LICENSE --output engine-bin/darwin-arm64/ONNXRUNTIME-LICENSE.txt
+      - run: npm ci
+      - run: npm test
+      - run: npm run bundle:check
+      - name: Build the installer
+        run: npx --no-install electron-builder --${{ matrix.targetFlag }} --${{ matrix.arch }} --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ matrix.platform }}
+          path: |
+            dist/*.dmg
+            dist/*.exe
+            dist/sources/
+          if-no-files-found: error

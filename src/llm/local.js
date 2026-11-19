@@ -10,7 +10,7 @@ export const DEFAULT_LOCAL_MODEL =
 export const MODELS_DIR =
   process.env.LOCAL_PLAYBOOKS_MODELS_DIR || path.join(os.homedir(), ".local-playbooks", "models");
 
-export async function createLocalEngine({ model = DEFAULT_LOCAL_MODEL, contextSize = 8192 } = {}) {
+export async function createLocalEngine({ model = DEFAULT_LOCAL_MODEL, contextSize = 8192, allowDownload = true, onProgress } = {}) {
   let lib;
   try {
     lib = await import("node-llama-cpp");
@@ -21,8 +21,8 @@ export async function createLocalEngine({ model = DEFAULT_LOCAL_MODEL, contextSi
   }
   const { getLlama, LlamaChatSession, resolveModelFile } = lib;
 
-  const modelPath = await resolveModelFile(model, { directory: MODELS_DIR });
-  const llama = await getLlama();
+  const modelPath = await resolveModelFile(model, { directory: MODELS_DIR, download: allowDownload ? "auto" : false, onProgress });
+  const llama = await getLlama({ build: "never" });
   const loaded = await llama.loadModel({ modelPath });
   const context = await loaded.createContext({ contextSize });
 

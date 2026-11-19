@@ -23,6 +23,7 @@ export async function fetchActivity({
   baseUrl = DEFAULT_SCREENPIPE_URL,
   pageSize = 500,
   maxItems = 20000,
+  headers = {},
 }) {
   const events = [];
   for (const contentType of ["ocr", "audio", "accessibility"]) {
@@ -38,7 +39,7 @@ export async function fetchActivity({
       if (app && contentType !== "audio") params.set("app_name", app);
       let res;
       try {
-        res = await fetch(`${baseUrl}/search?${params}`);
+        res = await fetch(`${baseUrl}/search?${params}`, {headers,signal:AbortSignal.timeout(30000)});
       } catch {
         throw new Error(`Can't reach Screenpipe at ${baseUrl}. Is it running?`);
       }

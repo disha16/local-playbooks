@@ -20,7 +20,7 @@ screenpipe-screen = { path = "../screenpipe-screen" }
 screenpipe-audio = { path = "../screenpipe-audio" }
 screenpipe-core = { path = "../screenpipe-core", features = ["security", "cloud-sync", "secrets"] }
 screenpipe-db = { path = "../screenpipe-db" }
-screenpipe-redact = { path = "../screenpipe-redact", features = ["opf-text"] }
+screenpipe-redact = { path = "../screenpipe-redact", optional = true }
 screenpipe-a11y = { path = "../screenpipe-a11y", features = ["db"] }
 screenpipe-capture = { path = "../screenpipe-capture" }
 screenpipe-apple-intelligence = { path = "../screenpipe-apple-intelligence", optional = true }
@@ -153,7 +153,7 @@ criterion = { workspace = true }
 # imports `screenpipe_redact::adapters::onnx` for the async PII worker. Without
 # it, `cargo {check,clippy,build} -p screenpipe-engine` (no --features) fails
 # to compile. Mac/Win release builds layer redact-onnx-{coreml,directml} on top.
-default = ["qwen3-asr", "parakeet", "redact-onnx-cpu"]
+default = []
 metal = ["screenpipe-audio/metal"]
 heap-prof = ["dhat"]
 cuda = ["screenpipe-audio/cuda"]
@@ -222,3 +222,7 @@ tracing-oslog = { workspace = true }
 # screenpipe-redact is wired into the engine binary (image-PII
 # reconciliation worker, screenpipe-engine.rs:1571).
 ignored = []
+
+[[bin]]
+name = "playbooks-prepare-models"
+path = "src/bin/playbooks-prepare-models.rs"
